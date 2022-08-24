@@ -1,0 +1,34 @@
+services:
+  gitlab:
+    image: 'gitlab/gitlab-ce:latest'
+    container_name: gitlab
+    restart: always
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://gitlab.eecicd.com'
+        # Add any other gitlab.rb configuration here, each on its own line
+    ports:
+      - '80:80'
+      - '443:443'
+      - '2224:22'
+    volumes:
+      - '/tfg/gitlab/config:/etc/gitlab'
+      - '/tfg/gitlab/logs:/var/log/gitlab'
+      - '/tfg/gitlab/data:/var/opt/gitlab'
+    shm_size: '256m'
+    extra_hosts:
+      - "eecicd.com:192.168.0.20"
+      - "gitlab.eecicd.com:192.168.0.20"
+      - "jenkins.eecicd.com:192.168.0.20"
+      - "registry.eecicd.com:192.168.0.20"
+      
+  registry:
+      ports:
+          - '50000:5000'
+      restart: always
+      container_name: registry
+      volumes:
+          - '/tfg/registry:/var/lib/registry'
+      image: 'registry:2'
+
+

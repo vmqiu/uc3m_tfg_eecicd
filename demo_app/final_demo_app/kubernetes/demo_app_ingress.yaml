@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-app-ingress
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /welcome_comp(/|$)(.*) 
+            backend:
+              service:
+                name: demo-app-welcome-service
+                port:
+                  number: 5000
+            pathType: Prefix
+          - path: /date_comp(/|$)(.*)
+            backend:
+              service:
+                name: demo-app-date-service
+                port:
+                  number: 5000
+            pathType: Prefix

@@ -1,0 +1,136 @@
+pipeline {
+
+  options {
+    skipDefaultCheckout true
+  }
+
+  agent {
+    kubernetes {
+      yaml '''
+        apiVersion: v1
+        kind: Pod
+        spec:
+          serviceAccountName: jenkins
+          hostAliases: 
+          - ip: "192.168.0.20"
+            hostnames:
+            - "gitlab.eecicd.com"
+            - "eecicd.com"
+            - "registry.eecicd.com"
+            - "jenkins.eecicd.com"
+          containers:
+          - name: python
+            image: python:3.10.5-slim
+            tty: true
+
+          - name: kubectl
+            image: lachlanevenson/k8s-kubectl:latest
+            command:
+            - cat
+            tty: true
+
+          - name: docker
+            image: docker:dind
+            securityContext:
+              privileged: true
+            command: ["dockerd"]
+            args: ["-H", "tcp://127.0.0.1:2376", "--insecure-registry", "registry.eecicd.com:50000"]
+            ports:
+              - containerPort: 2376
+        '''
+    }
+  }
+
+  stages {    
+    stage('Initial configuration'){
+      steps{
+        sh 'git config --global http.sslVerify false'
+
+        container('python'){
+          sh 'pip install poetry'
+        }
+
+        updateGitlabCommitStatus name: 'Initial configuration', state: 'success'
+        updateGitlabCommitStatus name: 'Clone repository', state: 'pending'
+        updateGitlabCommitStatus name: 'Build docker images', state: 'pending'
+        updateGitlabCommitStatus name: 'Deploy kubernetes', state: 'pending'
+        updateGitlabCommitStatus name: 'Sphinx', state: 'pending'
+        updateGitlabCommitStatus name: 'Status', state: 'pending'
+      }
+    }
+
+    stage('Clone repository'){
+      steps{
+        script {
+          scmVars = checkout scm
+        }
+        updateGitlabCommitStatus name: 'Clone repository', state: 'success'
+      }
+    }
+
+    stage('Build docker images') {
+      steps {
+
+        container('python'){
+          sh 'poetry export -f requirements.txt -o requirements.txt --without-hashes'
+        }
+
+        container('docker'){
+          script{
+            docker.withServer('tcp://127.0.0.1:2376') {
+              sh 'docker build -t welcome_comp -f src/welcome_comp/Dockerfile .'
+              sh 'docker build -t date_comp -f src/date_comp/Dockerfile .'
+              sh 'docker tag welcome_comp registry.eecicd.com:50000/welcome_comp'
+              sh 'docker tag date_comp registry.eecicd.com:50000/date_comp'
+              sh 'docker push registry.eecicd.com:50000/welcome_comp'
+              sh 'docker push registry.eecicd.com:50000/date_comp'
+            }
+          }
+        }
+        updateGitlabCommitStatus name: 'Build docker images', state: 'success'
+      }
+    }
+
+    stage('Deploy kubernetes') {
+      steps {
+        container('kubectl'){
+          sh 'kubectl apply -f kubernetes/demo_app_ingress.yaml'
+          sh 'kubectl apply -f kubernetes/demo_app_welcome.yaml'
+          sh 'kubectl apply -f kubernetes/demo_app_date.yaml'
+          sh 'kubectl rollout restart deployment demo-app-welcome-deployment -n default'
+          sh 'kubectl rollout restart deployment demo-app-date-deployment -n default'
+        }
+
+        updateGitlabCommitStatus name: 'Deploy kubernetes', state: 'success'
+      }
+    }
+    stage('Sphinx') {
+      steps{
+        container('python'){
+          sh 'poetry install'
+          sh 'poetry run sphinx-build -b html docs/source/ docs/build/html'
+        }
+
+        script{
+          zip archive: true, dir: 'docs/build/html', zipFile: 'demo_app_docs.zip'
+        }
+        
+        updateGitlabCommitStatus name: 'Sphinx', state: 'success'
+      }
+    }
+    stage('Status') {
+      steps {
+        updateGitlabCommitStatus name: 'Status', state: 'success'
+        addGitLabMRComment comment: 
+        """
+        Status: Success
+        Branch: ${scmVars.GIT_BRANCH}
+        Commit: ${scmVars.GIT_COMMIT}
+        Job name: ${JOB_NAME}
+        Build number: ${BUILD_NUMBER}
+        """
+      }
+    }
+
+  }
+}
